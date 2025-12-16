@@ -1,0 +1,2 @@
+# MB_PlaylistAtuoBackup
+一个MusicBee的播放列表自动备份插件
