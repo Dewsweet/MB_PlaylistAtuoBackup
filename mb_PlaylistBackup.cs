@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -28,7 +28,7 @@ namespace MusicBeePlugin
             about.TargetApplication = "";
             about.Type = PluginType.General;
             about.VersionMajor = 3;
-            about.VersionMinor = 3; // Final UI Polish
+            about.VersionMinor = 6; // Display & Logic Fix
             about.Revision = 1;
             about.MinInterfaceVersion = MinInterfaceVersion;
             about.MinApiRevision = MinApiRevision;
@@ -146,7 +146,7 @@ namespace MusicBeePlugin
                 if (!validPlaylists.ContainsKey(plSetting.Name)) continue;
 
                 string plUrl = validPlaylists[plSetting.Name];
-
+                
                 string exportDir = plSetting.CustomExportPath;
                 if (string.IsNullOrWhiteSpace(exportDir)) exportDir = config.DefaultExportPath;
                 exportDir = ResolvePath(exportDir);
@@ -170,6 +170,7 @@ namespace MusicBeePlugin
                     }
                 }
 
+                // 修正点 2：文件名只取最后一段
                 string simpleName = GetLeafName(plSetting.Name);
                 string m3uPath = Path.Combine(exportDir, ReplaceInvalidChars(simpleName) + ".m3u8");
 
@@ -183,7 +184,7 @@ namespace MusicBeePlugin
                             string writePath = audioFile;
                             if (useRelative)
                             {
-                                writePath = CalculateRelativePath(baseDir, audioFile);
+                                writePath = CalculateSubtractionRelativePath(baseDir, audioFile);
                             }
                             sw.WriteLine(writePath);
                         }
@@ -193,6 +194,7 @@ namespace MusicBeePlugin
             }
         }
 
+        // 获取路径最后一部分 (用于文件名)
         private string GetLeafName(string fullPath)
         {
             if (string.IsNullOrEmpty(fullPath)) return "";
@@ -217,42 +219,30 @@ namespace MusicBeePlugin
             return inputPath;
         }
 
-        private string CalculateRelativePath(string fromPath, string toPath)
+        // 减法相对路径逻辑
+        private string CalculateSubtractionRelativePath(string rootPath, string filePath)
         {
             try
             {
-                if (string.IsNullOrEmpty(fromPath) || string.IsNullOrEmpty(toPath)) return toPath;
-                string from = Path.GetFullPath(fromPath).TrimEnd(Path.DirectorySeparatorChar);
-                string to = Path.GetFullPath(toPath);
+                if (string.IsNullOrEmpty(rootPath) || string.IsNullOrEmpty(filePath)) return filePath;
 
-                string fromRoot = Path.GetPathRoot(from);
-                string toRoot = Path.GetPathRoot(to);
-                if (!string.Equals(fromRoot, toRoot, StringComparison.OrdinalIgnoreCase)) return toPath;
+                string root = Path.GetFullPath(rootPath);
+                if (!root.EndsWith(Path.DirectorySeparatorChar.ToString())) 
+                    root += Path.DirectorySeparatorChar;
 
-                string[] fromDirs = from.Split(Path.DirectorySeparatorChar);
-                string[] toDirs = to.Split(Path.DirectorySeparatorChar);
-                int length = Math.Min(fromDirs.Length, toDirs.Length);
-                int lastCommonRoot = -1;
+                string file = Path.GetFullPath(filePath);
 
-                for (int i = 0; i < length; i++)
+                // 核心：绝对路径 - 前缀
+                if (file.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (string.Equals(fromDirs[i], toDirs[i], StringComparison.OrdinalIgnoreCase)) lastCommonRoot = i;
-                    else break;
+                    string rel = file.Substring(root.Length);
+                    rel = rel.TrimStart(Path.DirectorySeparatorChar);
+                    return ".\\" + rel;
                 }
-                if (lastCommonRoot == -1) return toPath;
-
-                StringBuilder sb = new StringBuilder();
-                for (int i = lastCommonRoot + 1; i < fromDirs.Length; i++) sb.Append("..\\");
-                for (int i = lastCommonRoot + 1; i < toDirs.Length; i++)
-                {
-                    sb.Append(toDirs[i]);
-                    if (i < toDirs.Length - 1) sb.Append("\\");
-                }
-                string result = sb.ToString();
-                if (!result.StartsWith("..")) return ".\\" + result;
-                return result;
+                
+                return filePath;
             }
-            catch { return toPath; }
+            catch { return filePath; }
         }
 
         private string ReplaceInvalidChars(string filename)
@@ -266,7 +256,7 @@ namespace MusicBeePlugin
             public bool UseSkinTheme { get; set; } = false;
             public bool BackupOnShutdown { get; set; } = false;
             public bool EnableIntervalBackup { get; set; } = false;
-            public int IntervalMinutes { get; set; } = 1440;
+            public int IntervalMinutes { get; set; } = 1440; 
             public string DefaultExportPath { get; set; } = ".\\PlaylistsBackup";
             public List<PlaylistSetting> Playlists { get; set; } = new List<PlaylistSetting>();
         }
@@ -275,8 +265,8 @@ namespace MusicBeePlugin
         {
             public string Name { get; set; }
             public bool Enabled { get; set; } = false;
-            public string CustomExportPath { get; set; } = "";
-            public string CustomRootPath { get; set; } = "";
+            public string CustomExportPath { get; set; } = ""; 
+            public string CustomRootPath { get; set; } = ""; 
         }
 
         // --- UI ---
@@ -286,7 +276,6 @@ namespace MusicBeePlugin
             private Plugin _plugin;
             private MusicBeeApiInterface _api;
 
-            // 控件 - 将所有带文字的控件提升为字段以便翻译
             private DataGridView gridStatic, gridAuto;
             private Panel panelAutoContainer;
             private Button btnToggleAuto;
@@ -295,8 +284,7 @@ namespace MusicBeePlugin
             private TextBox txtDefaultPath;
             private Button btnSave, btnCancel;
             private ComboBox comboLang;
-
-            // 需要动态翻译的容器和标签
+            
             private GroupBox grpSettings, grpStatic;
             private Label lblStrategy, lblDefPath;
             private Label lblD, lblH, lblM;
@@ -313,31 +301,28 @@ namespace MusicBeePlugin
                 clrFg = Color.FromArgb(30, 30, 30);
                 clrPanel = Color.White;
                 clrBorder = Color.FromArgb(210, 210, 210);
-                clrAccent = Color.FromArgb(0, 120, 215);
+                clrAccent = Color.FromArgb(0, 120, 215); 
 
                 if (_config.UseSkinTheme) GetSkinColors();
 
                 InitializeComponent();
                 LoadData();
-                ApplyTheme();
+                ApplyTheme(); 
             }
 
             private void GetSkinColors()
             {
-                try
-                {
+                try {
                     int bg = _api.Setting_GetSkinElementColour(SkinElement.SkinSubPanel, ElementState.ElementStateDefault, ElementComponent.ComponentBackground);
                     int fg = _api.Setting_GetSkinElementColour(SkinElement.SkinSubPanel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground);
-                    if (bg != 0)
-                    {
+                    if (bg != 0) {
                         clrBg = Color.FromArgb(bg);
                         clrPanel = ControlPaint.Light(clrBg);
                     }
                     if (fg != 0) clrFg = Color.FromArgb(fg);
                     clrBorder = ControlPaint.Dark(clrBg);
-                    clrAccent = clrFg;
-                }
-                catch { }
+                    clrAccent = clrFg; 
+                } catch {}
             }
 
             private void InitializeComponent()
@@ -350,31 +335,27 @@ namespace MusicBeePlugin
 
                 TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20) };
                 layout.RowCount = 4;
-                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Top Options
-                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // Static Grid
-                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Auto Grid Container (AutoSize)
-                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Footer
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); 
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); 
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); 
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); 
                 this.Controls.Add(layout);
 
-                // 1. 顶部设置区
+                // 1. 设置区
                 grpSettings = new GroupBox { Text = "设置", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
                 TableLayoutPanel panelTop = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
-
-                // Line 1: 备份策略
+                
                 FlowLayoutPanel flowStrategy = new FlowLayoutPanel { AutoSize = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight };
                 lblStrategy = new Label { Text = "备份策略:", AutoSize = true, Margin = new Padding(0, 8, 10, 0), Font = new Font(this.Font, FontStyle.Bold) };
-
+                
                 chkShutdown = new CheckBox { Text = "软件关闭时", AutoSize = true, Margin = new Padding(0, 5, 20, 0) };
                 chkInterval = new CheckBox { Text = "定时备份:", AutoSize = true, Margin = new Padding(0, 5, 5, 0) };
                 numDay = CreateNum(0, 365); lblD = new Label { Text = "天", AutoSize = true, Margin = new Padding(0, 8, 5, 0) };
                 numHour = CreateNum(0, 23); lblH = new Label { Text = "时", AutoSize = true, Margin = new Padding(0, 8, 5, 0) };
                 numMin = CreateNum(0, 59); lblM = new Label { Text = "分", AutoSize = true, Margin = new Padding(0, 8, 20, 0) };
-
                 flowStrategy.Controls.AddRange(new Control[] { lblStrategy, chkShutdown, chkInterval, numDay, lblD, numHour, lblH, numMin, lblM });
-
-                // Line 2: 通用设置
+                
                 FlowLayoutPanel flowGeneral = new FlowLayoutPanel { AutoSize = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 10, 0, 0) };
-
                 comboLang = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 80, Margin = new Padding(0, 5, 20, 0) };
                 comboLang.Items.AddRange(new object[] { "EN", "CN" });
                 comboLang.SelectedIndexChanged += (s, e) => ApplyLanguage();
@@ -389,7 +370,6 @@ namespace MusicBeePlugin
                     FolderBrowserDialog fbd = new FolderBrowserDialog();
                     if (fbd.ShowDialog() == DialogResult.OK) txtDefaultPath.Text = fbd.SelectedPath;
                 };
-
                 flowGeneral.Controls.AddRange(new Control[] { comboLang, chkTheme, lblDefPath, txtDefaultPath, btnDefBrowse });
 
                 panelTop.Controls.Add(flowStrategy);
@@ -400,43 +380,38 @@ namespace MusicBeePlugin
                 // 2. 静态列表
                 grpStatic = new GroupBox { Text = "静态播放列表", Dock = DockStyle.Fill };
                 gridStatic = CreateModernGrid();
-
                 FlowLayoutPanel panelBatchStatic = CreateBatchPanel(gridStatic);
-                grpStatic.Controls.Add(panelBatchStatic);
-                grpStatic.Controls.Add(gridStatic);
-
+                grpStatic.Controls.Add(panelBatchStatic); 
+                grpStatic.Controls.Add(gridStatic); 
                 layout.Controls.Add(grpStatic, 0, 1);
 
-                // 3. 动态列表 (可折叠)
+                // 3. 动态列表
                 panelAutoContainer = new Panel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-
                 btnToggleAuto = new Button { Text = "▼ 动态播放列表", Dock = DockStyle.Top, Height = 30, FlatStyle = FlatStyle.Flat, TextAlign = ContentAlignment.MiddleLeft };
                 btnToggleAuto.FlatAppearance.BorderSize = 0;
                 btnToggleAuto.Click += (s, e) => ToggleAutoGrid();
 
-                // 修复点：关闭 AutoSize，并将高度减小为 160
-                GroupBox grpAuto = new GroupBox { Dock = DockStyle.Top, Text = "", Visible = false, Height = 160 };
-                grpAuto.AutoSize = false;
-
-                gridAuto = CreateModernGrid();
-                FlowLayoutPanel panelBatchAuto = CreateBatchPanel(gridAuto);
-
-                grpAuto.Controls.Add(gridAuto);
-                grpAuto.Controls.Add(panelBatchAuto);
+                GroupBox grpAuto = new GroupBox { Dock = DockStyle.Top, Text = "", Visible = false, Height = 160 }; 
+                grpAuto.AutoSize = false; 
+                gridAuto = CreateModernGrid(); 
+                FlowLayoutPanel panelBatchAuto = CreateBatchPanel(gridAuto); 
+                
+                grpAuto.Controls.Add(gridAuto);       
+                grpAuto.Controls.Add(panelBatchAuto); 
                 gridAuto.BringToFront();
 
                 panelAutoContainer.Controls.Add(grpAuto);
                 panelAutoContainer.Controls.Add(btnToggleAuto);
                 layout.Controls.Add(panelAutoContainer, 0, 2);
 
-                // 4. 底部按钮
+                // 4. 底部
                 FlowLayoutPanel panelFooter = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 15, 0, 0) };
                 btnCancel = CreateMainButton("取消", false);
                 btnSave = CreateMainButton("保存配置", true);
-
+                
                 btnCancel.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; this.Close(); };
                 btnSave.Click += BtnSave_Click;
-
+                
                 panelFooter.Controls.Add(btnCancel);
                 panelFooter.Controls.Add(btnSave);
                 layout.Controls.Add(panelFooter, 0, 3);
@@ -445,24 +420,23 @@ namespace MusicBeePlugin
             private FlowLayoutPanel CreateBatchPanel(DataGridView dgv)
             {
                 FlowLayoutPanel p = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Height = 40, FlowDirection = FlowDirection.LeftToRight };
-
+                
                 Button btnAppPath = CreateFlatButton("应用到同类");
                 Button btnClrPath = CreateFlatButton("清除选中");
                 Label sep = new Label { Text = "|", AutoSize = true, Margin = new Padding(5, 10, 5, 0), ForeColor = Color.Gray };
-
+                
                 Button btnAppRoot = CreateFlatButton("应用到同类");
                 Button btnClrRoot = CreateFlatButton("清除选中");
 
                 btnAppPath.Click += (s, e) => BatchApply(dgv, 2);
                 btnClrPath.Click += (s, e) => BatchClear(dgv, 2);
-
                 btnAppRoot.Click += (s, e) => BatchApply(dgv, 4);
                 btnClrRoot.Click += (s, e) => BatchClear(dgv, 4);
 
-                p.Controls.AddRange(new Control[] {
-                    new Label{Text="导出路径:", AutoSize=true, Margin=new Padding(0,10,0,0)}, btnAppPath, btnClrPath,
+                p.Controls.AddRange(new Control[] { 
+                    new Label{Text="导出路径:", AutoSize=true, Margin=new Padding(0,10,0,0)}, btnAppPath, btnClrPath, 
                     sep,
-                    new Label{Text="前缀:", AutoSize=true, Margin=new Padding(0,10,0,0)}, btnAppRoot, btnClrRoot
+                    new Label{Text="前缀:", AutoSize=true, Margin=new Padding(0,10,0,0)}, btnAppRoot, btnClrRoot 
                 });
                 return p;
             }
@@ -471,66 +445,58 @@ namespace MusicBeePlugin
             {
                 GroupBox g = panelAutoContainer.Controls.OfType<GroupBox>().FirstOrDefault();
                 if (g == null) return;
-
                 bool isVisible = !g.Visible;
                 g.Visible = isVisible;
-
                 string suffix = (comboLang.SelectedItem.ToString() == "CN" ? " 动态播放列表" : " Auto Playlists");
                 btnToggleAuto.Text = (isVisible ? "▲" : "▼") + suffix;
             }
 
-            private NumericUpDown CreateNum(int min, int max)
-            {
+            private NumericUpDown CreateNum(int min, int max) {
                 return new NumericUpDown { Minimum = min, Maximum = max, Width = 45, Margin = new Padding(0, 5, 0, 0) };
             }
 
-            private Button CreateFlatButton(string text)
-            {
-                Button b = new Button { Text = text, AutoSize = true, Height = 26, FlatStyle = FlatStyle.Flat, Margin = new Padding(3, 5, 3, 3) };
+            private Button CreateFlatButton(string text) {
+                Button b = new Button { Text = text, AutoSize = true, Height = 26, FlatStyle = FlatStyle.Flat, Margin = new Padding(3,5,3,3) };
                 b.FlatAppearance.BorderColor = Color.LightGray;
                 b.Font = new Font(this.Font.FontFamily, 8f);
                 return b;
             }
 
-            private Button CreateMainButton(string text, bool primary)
-            {
+            private Button CreateMainButton(string text, bool primary) {
                 Button b = new Button { Text = text, Width = 100, Height = 35, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
                 b.FlatAppearance.BorderSize = 0;
                 return b;
             }
 
-            private DataGridView CreateModernGrid()
-            {
+            private DataGridView CreateModernGrid() {
                 var dgv = new DataGridView();
                 dgv.Dock = DockStyle.Fill;
                 dgv.AutoGenerateColumns = false;
                 dgv.AllowUserToAddRows = false;
                 dgv.AllowUserToDeleteRows = false;
-                dgv.AllowUserToResizeRows = false;
+                dgv.AllowUserToResizeRows = false; 
                 dgv.RowHeadersVisible = false;
                 dgv.SelectionMode = DataGridViewSelectionMode.CellSelect;
                 dgv.BackgroundColor = Color.White;
                 dgv.BorderStyle = BorderStyle.FixedSingle;
-                dgv.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-                dgv.RowTemplate.Height = 32;
-
+                dgv.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill; 
+                dgv.RowTemplate.Height = 32; 
                 dgv.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
                 dgv.ColumnHeadersHeight = 35;
 
-                // 列
                 var colCheck = new DataGridViewCheckBoxColumn { DataPropertyName = "Enabled", Width = 40, HeaderText = "✔" };
                 colCheck.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
                 colCheck.MinimumWidth = 40;
-
+                
                 var colName = new DataGridViewTextBoxColumn { DataPropertyName = "DisplayName", ReadOnly = true, HeaderText = "列表名称" };
-                colName.MinimumWidth = 100;
-
+                colName.MinimumWidth = 100; 
+                
                 var colPath = new DataGridViewTextBoxColumn { DataPropertyName = "Path", HeaderText = "导出路径" };
                 colPath.MinimumWidth = 100;
 
                 var colBtnPath = new DataGridViewButtonColumn { Text = "...", UseColumnTextForButtonValue = true, Width = 30 };
                 colBtnPath.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-
+                
                 var colRoot = new DataGridViewTextBoxColumn { DataPropertyName = "RootPath", HeaderText = "相对路径前缀" };
                 colRoot.MinimumWidth = 100;
 
@@ -546,51 +512,40 @@ namespace MusicBeePlugin
             {
                 var dgv = sender as DataGridView;
                 if (e.RowIndex < 0 || dgv == null) return;
-
-                if (e.ColumnIndex == 3)
-                {
+                if (e.ColumnIndex == 3) {
                     FolderBrowserDialog fbd = new FolderBrowserDialog();
                     if (fbd.ShowDialog() == DialogResult.OK) dgv.Rows[e.RowIndex].Cells[2].Value = fbd.SelectedPath;
                 }
-                else if (e.ColumnIndex == 5)
-                {
+                else if (e.ColumnIndex == 5) {
                     FolderBrowserDialog fbd = new FolderBrowserDialog();
                     if (fbd.ShowDialog() == DialogResult.OK) dgv.Rows[e.RowIndex].Cells[4].Value = fbd.SelectedPath;
                 }
             }
 
-            // 批量应用
             private void BatchApply(DataGridView dgv, int valueColIndex)
             {
                 HashSet<string> values = new HashSet<string>();
                 List<int> checkedRowIndices = new List<int>();
-
-                foreach (DataGridViewRow row in dgv.Rows)
-                {
+                foreach (DataGridViewRow row in dgv.Rows) {
                     bool enabled = Convert.ToBoolean(row.Cells[0].Value);
-                    if (enabled)
-                    {
+                    if (enabled) {
                         checkedRowIndices.Add(row.Index);
                         string val = row.Cells[valueColIndex].Value?.ToString();
                         if (!string.IsNullOrWhiteSpace(val)) values.Add(val);
                     }
                 }
-
-                if (values.Count > 1)
-                {
+                if (values.Count > 1) {
                     MessageBox.Show("所选项目值不一致，无法自动应用。", "冲突", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
-                if (values.Count == 0) return;
-
+                if (values.Count == 0) return; 
                 string targetValue = values.First();
                 foreach (int idx in checkedRowIndices) dgv.Rows[idx].Cells[valueColIndex].Value = targetValue;
             }
 
             private void BatchClear(DataGridView dgv, int valueColIndex)
             {
-                foreach (DataGridViewRow row in dgv.Rows)
-                {
+                foreach (DataGridViewRow row in dgv.Rows) {
                     bool enabled = Convert.ToBoolean(row.Cells[0].Value);
                     if (enabled) row.Cells[valueColIndex].Value = "";
                 }
@@ -598,46 +553,15 @@ namespace MusicBeePlugin
 
             private void BtnSave_Click(object sender, EventArgs e)
             {
-                CheckPathConflict(gridStatic);
-                CheckPathConflict(gridAuto);
+                // 修正点 3：移除盘符校验逻辑，直接保存
                 this.DialogResult = DialogResult.OK;
                 this.Close();
             }
 
-            private void CheckPathConflict(DataGridView dgv)
-            {
-                foreach (DataGridViewRow row in dgv.Rows)
-                {
-                    bool enabled = Convert.ToBoolean(row.Cells[0].Value);
-                    if (!enabled) continue;
-
-                    string path = row.Cells[2].Value?.ToString() ?? "";
-                    string root = row.Cells[4].Value?.ToString() ?? "";
-
-                    if (!string.IsNullOrWhiteSpace(path) && !string.IsNullOrWhiteSpace(root))
-                    {
-                        try
-                        {
-                            string rootDrive = Path.GetPathRoot(Path.GetFullPath(root));
-                            string pathDrive = Path.GetPathRoot(Path.GetFullPath(path));
-                            if (rootDrive != pathDrive)
-                            {
-                                MessageBox.Show(
-                                    $"列表 '{row.Cells[1].Value}' 的导出路径与前缀不在同盘符，将失效。",
-                                    "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                                return;
-                            }
-                        }
-                        catch { }
-                    }
-                }
-            }
-
-            private class GridItem
-            {
+            private class GridItem {
                 public bool Enabled { get; set; }
-                public string Name { get; set; }
-                public string DisplayName { get; set; }
+                public string Name { get; set; } 
+                public string DisplayName { get; set; } 
                 public string Path { get; set; }
                 public string RootPath { get; set; }
             }
@@ -665,18 +589,16 @@ namespace MusicBeePlugin
                     {
                         string fullName = _api.Playlist_GetName(url);
                         PlaylistFormat fmt = _api.Playlist_GetType(url);
-
-                        string simpleName = fullName;
-                        int idx = fullName.LastIndexOf('\\');
-                        if (idx >= 0 && idx < fullName.Length - 1) simpleName = fullName.Substring(idx + 1);
+                        
+                        // 修正点 1：UI显示全路径
+                        string simpleName = fullName; 
 
                         var saved = _config.Playlists.FirstOrDefault(p => p.Name == fullName);
 
-                        var item = new GridItem
-                        {
+                        var item = new GridItem {
                             Enabled = saved != null ? saved.Enabled : false,
                             Name = fullName,
-                            DisplayName = simpleName,
+                            DisplayName = simpleName, // 显示完整路径
                             Path = saved != null ? saved.CustomExportPath : "",
                             RootPath = saved != null ? saved.CustomRootPath : ""
                         };
@@ -710,11 +632,10 @@ namespace MusicBeePlugin
             {
                 var items = dgv.DataSource as List<GridItem>;
                 if (items == null) return;
-                foreach (var item in items)
+                foreach(var item in items)
                 {
-                    _config.Playlists.Add(new PlaylistSetting
-                    {
-                        Name = item.Name,
+                    _config.Playlists.Add(new PlaylistSetting {
+                        Name = item.Name, 
                         Enabled = item.Enabled,
                         CustomExportPath = item.Path,
                         CustomRootPath = item.RootPath
@@ -725,8 +646,7 @@ namespace MusicBeePlugin
             private void ApplyTheme()
             {
                 if (_config.UseSkinTheme) GetSkinColors();
-                else
-                {
+                else {
                     clrBg = Color.WhiteSmoke;
                     clrFg = Color.Black;
                     clrPanel = Color.White;
@@ -739,7 +659,7 @@ namespace MusicBeePlugin
                 UpdateColorRec(this);
                 StyleGrid(gridStatic);
                 StyleGrid(gridAuto);
-
+                
                 btnSave.BackColor = clrAccent;
                 btnSave.ForeColor = Color.White;
                 btnCancel.BackColor = clrPanel;
@@ -752,13 +672,11 @@ namespace MusicBeePlugin
                 {
                     if (c is GroupBox) c.ForeColor = clrFg;
                     if (c is CheckBox || c is Label) c.ForeColor = clrFg;
-                    if (c is TextBox || c is NumericUpDown || c is ComboBox)
-                    {
+                    if (c is TextBox || c is NumericUpDown || c is ComboBox) {
                         c.BackColor = clrPanel;
                         c.ForeColor = clrFg;
                     }
-                    if (c is Button && c != btnSave && c != btnToggleAuto)
-                    {
+                    if (c is Button && c != btnSave && c != btnToggleAuto) {
                         c.BackColor = clrPanel;
                         c.ForeColor = clrFg;
                     }
@@ -781,22 +699,20 @@ namespace MusicBeePlugin
             private void ApplyLanguage()
             {
                 bool isCn = comboLang.SelectedItem.ToString() == "CN";
-
                 this.Text = isCn ? "播放列表自动备份" : "Playlist Auto Backup";
-
+                
                 string hName = isCn ? "列表名称" : "Name";
                 string hPath = isCn ? "导出路径" : "Export Path";
                 string hRoot = isCn ? "相对路径前缀" : "Rel. Prefix";
-
+                
                 gridStatic.Columns[1].HeaderText = hName;
                 gridStatic.Columns[2].HeaderText = hPath;
                 gridStatic.Columns[4].HeaderText = hRoot;
-
+                
                 gridAuto.Columns[1].HeaderText = hName;
                 gridAuto.Columns[2].HeaderText = hPath;
                 gridAuto.Columns[4].HeaderText = hRoot;
 
-                // Fix: 动态翻译所有控件
                 grpSettings.Text = isCn ? "设置" : "Settings";
                 lblStrategy.Text = isCn ? "备份策略:" : "Backup Strategy:";
                 grpStatic.Text = isCn ? "静态播放列表" : "Static Playlists";
@@ -810,34 +726,26 @@ namespace MusicBeePlugin
                 chkTheme.Text = isCn ? "跟随主题色" : "Follow Theme";
 
                 string suffix = isCn ? " 动态播放列表" : " Auto Playlists";
-                if (gridAuto != null)
-                {
+                if (gridAuto != null) {
                     btnToggleAuto.Text = (gridAuto.Visible ? "▲" : "▼") + suffix;
                 }
-
+                
                 btnSave.Text = isCn ? "保存配置" : "Save";
                 btnCancel.Text = isCn ? "取消" : "Cancel";
-
                 UpdateBatchButtonText(this, isCn);
             }
-
-            private void UpdateBatchButtonText(Control parent, bool isCn)
-            {
-                foreach (Control c in parent.Controls)
-                {
-                    if (c is FlowLayoutPanel)
-                    {
-                        foreach (Control btn in c.Controls)
-                        {
-                            if (btn is Button)
-                            {
-                                if (btn.Text.Contains("应用") || btn.Text.Contains("Apply"))
+            
+            private void UpdateBatchButtonText(Control parent, bool isCn) {
+                foreach(Control c in parent.Controls) {
+                    if (c is FlowLayoutPanel) {
+                        foreach(Control btn in c.Controls) {
+                            if (btn is Button) {
+                                if (btn.Text.Contains("应用") || btn.Text.Contains("Apply")) 
                                     btn.Text = isCn ? "应用到同类" : "Apply to All";
-                                if (btn.Text.Contains("清除") || btn.Text.Contains("Clear"))
+                                if (btn.Text.Contains("清除") || btn.Text.Contains("Clear")) 
                                     btn.Text = isCn ? "清除选中" : "Clear Sel.";
                             }
-                            if (btn is Label)
-                            {
+                            if (btn is Label) {
                                 if (btn.Text.Contains("导出") || btn.Text.Contains("Export"))
                                     btn.Text = isCn ? "导出路径:" : "Export Path:";
                                 if (btn.Text.Contains("前缀") || btn.Text.Contains("Prefix"))
